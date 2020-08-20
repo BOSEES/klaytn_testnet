@@ -1,11 +1,11 @@
-pragma solidity ^0.5.0;
+pragma solidity ^0.5.6;
 
 import "./IKIP7.sol";
 import "./KIP13.sol";
-import "./IKIPReceiver.sol";
+import "./IKIP7Receiver.sol";
 import "./library.sol";
 
-contract Kraymore is KIP13, IKIP7 {
+contract klaymore is KIP13, IKIP7 {
     using SafeMath for uint256;
     using Address for address;
 
@@ -81,8 +81,8 @@ contract Kraymore is KIP13, IKIP7 {
      *
      * - `spender` cannot be the zero address.
      */
-    function approve(address spender, uint256 value) public returns (bool) {
-        _approve(msg.sender, spender, value);
+    function approve(address spender, uint256 amount) public returns (bool) {
+        _approve(msg.sender, spender, amount);
         return true;
     }
 

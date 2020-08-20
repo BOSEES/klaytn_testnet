@@ -1,4 +1,4 @@
-pragma solidity ^0.5.0;
+pragma solidity ^0.5.6;
 
 /**
  * #title KIP-7 Fungible Token Standard, optional wallet interface

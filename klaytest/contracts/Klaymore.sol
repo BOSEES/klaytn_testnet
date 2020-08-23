@@ -1,244 +1,123 @@
-pragma solidity ^0.5.6;
+pragma solidity ^0.5.0;
 
-import "./IKIP7.sol";
-import "./KIP13.sol";
-import "./IKIP7Receiver.sol";
-import "./library.sol";
+import "caver-js/packages/caver-kct/src/contract/token/KIP7/KIP7.sol";
+import "caver-js/packages/caver-kct/src/contract/token/KIP7/KIP7Metadata.sol";
+import "caver-js/packages/caver-kct/src/contract/token/KIP7/KIP7Pausable.sol";
 
-contract klaymore is KIP13, IKIP7 {
-    using SafeMath for uint256;
-    using Address for address;
-
-    // Equals to `bytes4(keccak256("onKIP7Received(address,address,uint256,bytes)"))`
-    // which can be also obtained as `IKIP7Receiver(0).onKIP7Received.selector`
-    bytes4 private constant _KIP7_RECEIVED = 0x9d188c22;
-
-    mapping (address => uint256) private _balances;
-
-    mapping (address => mapping (address => uint256)) private _allowances;
-
-    uint256 private _totalSupply;
-
-    /*
-     *     bytes4(keccak256('totalSupply()')) == 0x18160ddd
-     *     bytes4(keccak256('balanceOf(address)')) == 0x70a08231
-     *     bytes4(keccak256('transfer(address,uint256)')) == 0xa9059cbb
-     *     bytes4(keccak256('allowance(address,address)')) == 0xdd62ed3e
-     *     bytes4(keccak256('approve(address,uint256)')) == 0x095ea7b3
-     *     bytes4(keccak256('transferFrom(address,address,uint256)')) == 0x23b872dd
-     *     bytes4(keccak256("safeTransfer(address,uint256)")) == 0x423f6cef
-     *     bytes4(keccak256("safeTransfer(address,uint256,bytes)")) == 0xeb795549
-     *     bytes4(keccak256("safeTransferFrom(address,address,uint256)")) == 0x42842e0e
-     *     bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)")) == 0xb88d4fde
-     *
-     *     => 0x18160ddd ^ 0x70a08231 ^ 0xa9059cbb ^ 0xdd62ed3e ^ 0x095ea7b3 ^ 0x23b872dd ^ 0x423f6cef ^ 0xeb795549 ^ 0x42842e0e ^ 0xb88d4fde == 0x65787371
-     */
-    bytes4 private constant _INTERFACE_ID_KIP7 = 0x65787371;
-
-    constructor () public {
-        // register the supported interfaces to conform to KIP7 via KIP13
-        _registerInterface(_INTERFACE_ID_KIP7);
+contract Klaymore is KIP7,KIP7Metadata,KIP7Pausable {
+    address private _owner;
+    
+    address [] internal stakeholders; 
+    
+    mapping(address => uint256) internal stakes;
+    mapping(address => uint256) internal rewards;
+    
+    modifier onlyOwner(){
+    require(msg.sender == _owner);
+    _;
     }
-
-    /**
-     * #dev See `IKIP7.totalSupply`.
-     */
-    function totalSupply() public view returns (uint256) {
-        return _totalSupply;
+    
+    constructor(string memory name, string memory symbol, uint8 decimals) KIP7Metadata(name, symbol, decimals) public { 
+    
     }
-
-    /**
-     * #dev See `IKIP7.balanceOf`.
-     */
-    function balanceOf(address account) public view returns (uint256) {
-        return _balances[account];
+    // 테스트용 클레이예치 및 토큰 반환하는기능.  비율은 예치한 클레이와 동일하게함.
+    function createStake(uint256 _stake) public {
+        _burn(msg.sender, _stake);
+        if(stakes[msg.sender] == 0) addStakeholder(msg.sender);
+        stakes[msg.sender] = stakes[msg.sender].add(_stake);
     }
-
-    /**
-     * #dev See `IKIP7.transfer`.
-     *
-     * Requirements:
-     *
-     * - `recipient` cannot be the zero address.
-     * - the caller must have a balance of at least `amount`.
-     */
+    
+    function removeStake(uint256 _stake) public {
+        stakes[msg.sender] = stakes[msg.sender].sub(_stake);
+        if(stakes[msg.sender] == 0) removeStakeholder(msg.sender);
+        _mint(msg.sender, _stake);
+    }
+    
+    function stakeOf(address _stakeholder) public view returns(uint256) {
+        return stakes[_stakeholder];
+    }
+    
+    function totalStakes() public view returns(uint256) {
+    uint256 _totalStakes = 0;
+    for (uint256 s = 0; s < stakeholders.length; s += 1){
+        _totalStakes = _totalStakes.add(stakes[stakeholders[s]]);
+    }
+    return _totalStakes;
+    }
+    //스테이킹한 사람을 조회하는 기능
+    function isStakeholder(address _address)public view returns(bool, uint256) {
+    for (uint256 s = 0; s < stakeholders.length; s += 1){
+        if (_address == stakeholders[s]) return (true, s);
+    }
+    return (false, 0);
+    }
+    // 개인과 개인끼리 토큰 거래를 할수있는 함수 단순하게 
+    //호출자(msg.sender)가 to(recipient) 에게 토큰을 얼마만큼(amount)를 보내는 함수 
     function transfer(address recipient, uint256 amount) public returns (bool) {
         _transfer(msg.sender, recipient, amount);
         return true;
     }
-
+    
+    function addStakeholder(address _stakeholder) public {
+        (bool _isStakeholder, ) = isStakeholder(_stakeholder);
+        if(!_isStakeholder) stakeholders.push(_stakeholder);
+    }
+    
+    function removeStakeholder(address _stakeholder) public {
+        (bool _isStakeholder, uint256 s) = isStakeholder(_stakeholder);
+        if(_isStakeholder){
+            stakeholders[s] = stakeholders[stakeholders.length - 1];
+            stakeholders.pop();
+        } 
+    }
+    // ---------- REWARDS ----------
+    
     /**
-     * #dev See `IKIP7.allowance`.
+     * @notice A method to allow a stakeholder to check his rewards.
+     * @param _stakeholder The stakeholder to check rewards for.
      */
-    function allowance(address owner, address spender) public view returns (uint256) {
-        return _allowances[owner][spender];
-    }
-
-    /**
-     * #dev See `IKIP7.approve`.
-     *
-     * Requirements:
-     *
-     * - `spender` cannot be the zero address.
-     */
-    function approve(address spender, uint256 amount) public returns (bool) {
-        _approve(msg.sender, spender, amount);
-        return true;
-    }
-
-    /**
-     * #dev See `IKIP7.transferFrom`.
-     *
-     * Emits an `Approval` event indicating the updated allowance. This is not
-     * required by the KIP. See the note at the beginning of `KIP7`;
-     *
-     * Requirements:
-     * - `sender` and `recipient` cannot be the zero address.
-     * - `sender` must have a balance of at least `value`.
-     * - the caller must have allowance for `sender`'s tokens of at least
-     * `amount`.
-     */
-    function transferFrom(address sender, address recipient, uint256 amount) public returns (bool) {
-        _transfer(sender, recipient, amount);
-        _approve(sender, msg.sender, _allowances[sender][msg.sender].sub(amount));
-        return true;
-    }
-
-    /**
-    * #dev  Moves `amount` tokens from the caller's account to `recipient`.
-    */
-    function safeTransfer(address recipient, uint256 amount) public {
-        safeTransfer(recipient, amount, "");
-    }
-
-    /**
-    * #dev Moves `amount` tokens from the caller's account to `recipient`.
-    */
-    function safeTransfer(address recipient, uint256 amount, bytes memory data) public {
-        transfer(recipient, amount);
-        require(_checkOnKIP7Received(msg.sender, recipient, amount, data), "KIP7: transfer to non KIP7Receiver implementer");
-    }
-
-    /**
-    * #dev Moves `amount` tokens from `sender` to `recipient` using the allowance mechanism.
-    * `amount` is then deducted from the caller's allowance.
-    */
-    function safeTransferFrom(address sender, address recipient, uint256 amount) public {
-        safeTransferFrom(sender, recipient, amount, "");
-    }
-
-    /**
-    * #dev Moves `amount` tokens from `sender` to `recipient` using the allowance mechanism.
-    * `amount` is then deducted from the caller's allowance.
-    */
-    function safeTransferFrom(address sender, address recipient, uint256 amount, bytes memory data) public {
-        transferFrom(sender, recipient, amount);
-        require(_checkOnKIP7Received(sender, recipient, amount, data), "KIP7: transfer to non KIP7Receiver implementer");
-    }
-
-    /**
-     * #dev Moves tokens `amount` from `sender` to `recipient`.
-     *
-     * This is internal function is equivalent to `transfer`, and can be used to
-     * e.g. implement automatic token fees, slashing mechanisms, etc.
-     *
-     * Emits a `Transfer` event.
-     *
-     * Requirements:
-     *
-     * - `sender` cannot be the zero address.
-     * - `recipient` cannot be the zero address.
-     * - `sender` must have a balance of at least `amount`.
-     */
-    function _transfer(address sender, address recipient, uint256 amount) internal {
-        require(sender != address(0), "KIP7: transfer from the zero address");
-        require(recipient != address(0), "KIP7: transfer to the zero address");
-
-        _balances[sender] = _balances[sender].sub(amount);
-        _balances[recipient] = _balances[recipient].add(amount);
-        emit Transfer(sender, recipient, amount);
-    }
-
-    /** #dev Creates `amount` tokens and assigns them to `account`, increasing
-     * the total supply.
-     *
-     * Emits a `Transfer` event with `from` set to the zero address.
-     *
-     * Requirements
-     *
-     * - `to` cannot be the zero address.
-     */
-    function _mint(address account, uint256 amount) internal {
-        require(account != address(0), "KIP7: mint to the zero address");
-
-        _totalSupply = _totalSupply.add(amount);
-        _balances[account] = _balances[account].add(amount);
-        emit Transfer(address(0), account, amount);
-    }
-
-     /**
-     * #dev Destroys `amount` tokens from `account`, reducing the
-     * total supply.
-     *
-     * Emits a `Transfer` event with `to` set to the zero address.
-     *
-     * Requirements
-     *
-     * - `account` cannot be the zero address.
-     * - `account` must have at least `amount` tokens.
-     */
-    function _burn(address account, uint256 value) internal {
-        require(account != address(0), "KIP7: burn from the zero address");
-
-        _totalSupply = _totalSupply.sub(value);
-        _balances[account] = _balances[account].sub(value);
-        emit Transfer(account, address(0), value);
-    }
-
-    /**
-     * #dev Sets `amount` as the allowance of `spender` over the `owner`s tokens.
-     *
-     * This internal function is equivalent to `approve`, and can be used to
-     * e.g. set automatic allowances for certain subsystems, etc.
-     *
-     * Emits an `Approval` event.
-     *
-     * Requirements:
-     *
-     * - `owner` cannot be the zero address.
-     * - `spender` cannot be the zero address.
-     */
-    function _approve(address owner, address spender, uint256 value) internal {
-        require(owner != address(0), "KIP7: approve from the zero address");
-        require(spender != address(0), "KIP7: approve to the zero address");
-
-        _allowances[owner][spender] = value;
-        emit Approval(owner, spender, value);
-    }
-
-    /**
-     * #dev Destroys `amount` tokens from `account`.`amount` is then deducted
-     * from the caller's allowance.
-     *
-     * See `_burn` and `_approve`.
-     */
-    function _burnFrom(address account, uint256 amount) internal {
-        _burn(account, amount);
-        _approve(account, msg.sender, _allowances[account][msg.sender].sub(amount));
-    }
-
-    /**
-     * #dev Internal function to invoke `onKIP7Received` on a target address.
-     * The call is not executed if the target address is not a contract.
-     */
-    function _checkOnKIP7Received(address sender, address recipient, uint256 amount, bytes memory _data)
-        internal returns (bool)
+    function rewardOf(address _stakeholder) public view returns(uint256)
     {
-        if (!recipient.isContract()) {
-            return true;
-        }
+        return rewards[_stakeholder];
+    }
 
-        bytes4 retval = IKIP7Receiver(recipient).onKIP7Received(msg.sender, sender, amount, _data);
-        return (retval == _KIP7_RECEIVED);
+    /**
+     * @notice A method to the aggregated rewards from all stakeholders.
+     * @return uint256 The aggregated rewards from all stakeholders.
+     */
+    function totalRewards() public view returns(uint256) {
+        uint256 _totalRewards = 0;
+        for (uint256 s = 0; s < stakeholders.length; s += 1){
+            _totalRewards = _totalRewards.add(rewards[stakeholders[s]]);
+        }
+        return _totalRewards;
+    }
+
+    /** 
+     * @notice A simple method that calculates the rewards for each stakeholder.
+     * @param _stakeholder The stakeholder to calculate rewards for.
+     */
+    function calculateReward(address _stakeholder) public view returns(uint256) {
+        return stakes[_stakeholder] / 100;
+    }
+
+    /**
+     * @notice A method to distribute rewards to all stakeholders.
+     */
+    function distributeRewards() public onlyOwner {
+        for (uint256 s = 0; s < stakeholders.length; s += 1){
+            address stakeholder = stakeholders[s];
+            uint256 reward = calculateReward(stakeholder);
+            rewards[stakeholder] = rewards[stakeholder].add(reward);
+        }
+    }
+
+    /**
+     * @notice A method to allow a stakeholder to withdraw his rewards.
+     */
+    function withdrawReward() public {
+        uint256 reward = rewards[msg.sender];
+        rewards[msg.sender] = 0;
+        _mint(msg.sender, reward);
     }
 }
